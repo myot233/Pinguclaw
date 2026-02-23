@@ -1,5 +1,8 @@
 {
   "id": "pinguclaw",
+  "channels": [
+    "pinguclaw"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
