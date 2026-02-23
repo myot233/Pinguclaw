@@ -25,6 +25,10 @@ const clients = new Map<string, OneBotWsClient>();
 const detachInboundHandlers = new Map<string, () => void>();
 const detachLifecycleHandlers = new Map<string, () => void>();
 
+function formatConnInfo(account: ResolvedQQAccount): string {
+  return `wsUrl="${account.config.wsUrl}" accessToken="${account.config.accessToken || ""}"`;
+}
+
 function logInfo(message: string, extra?: unknown): void {
   if (extra === undefined) {
     console.log(`[${CHANNEL_ID}] ${message}`);
@@ -42,9 +46,9 @@ function logWarn(message: string, extra?: unknown): void {
 }
 
 function createClient(account: ResolvedQQAccount): OneBotWsClient {
-  logInfo(`creating websocket client for account="${account.accountId}"`, {
-    wsUrl: account.config.wsUrl,
-  });
+  logInfo(
+    `creating websocket client for account="${account.accountId}" ${formatConnInfo(account)}`,
+  );
   return new OneBotWsClient({
     url: account.config.wsUrl,
     accessToken: account.config.accessToken || undefined,
@@ -70,10 +74,10 @@ async function ensureSendClient(cfg: OpenClawConfig, accountId?: string | null):
   const temporary = !existing;
   const client = existing ?? createClient(resolved);
   if (client.getState() !== "open") {
-    logInfo(`connecting send client for account="${resolved.accountId}"`, {
-      temporary,
-      state: client.getState(),
-    });
+    logInfo(
+      `connecting send client for account="${resolved.accountId}" ${formatConnInfo(resolved)}`,
+      { temporary, state: client.getState() },
+    );
     await client.connect();
     logInfo(`send client connected for account="${resolved.accountId}"`);
   }
@@ -225,7 +229,7 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
     startAccount: async (ctx) => {
       const account = resolveQQAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
       ctx.log?.info?.(
-        `[${CHANNEL_ID}] startAccount begin account="${account.accountId}" wsUrl="${account.config.wsUrl}"`,
+        `[${CHANNEL_ID}] startAccount begin account="${account.accountId}" ${formatConnInfo(account)}`,
       );
       if (!account.configured) {
         ctx.log?.warn?.(
