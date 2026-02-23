@@ -228,6 +228,7 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
   gateway: {
     startAccount: async (ctx) => {
       const account = resolveQQAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
+      console.log(ctx.log)
       ctx.log?.info?.(
         `[${CHANNEL_ID}] startAccount begin account="${account.accountId}" ${formatConnInfo(account)}`,
       );
