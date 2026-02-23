@@ -23,6 +23,7 @@ import { dispatchQQMessage } from "./send";
 
 const clients = new Map<string, OneBotWsClient>();
 const detachInboundHandlers = new Map<string, () => void>();
+const detachLifecycleHandlers = new Map<string, () => void>();
 
 function logInfo(message: string, extra?: unknown): void {
   if (extra === undefined) {
@@ -255,7 +256,9 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
         lastError: null,
       });
 
-      client.on("open", () => {
+      // 防止网关重复启动同一 account 时重复绑定事件监听，导致日志和状态更新被放大。
+      detachLifecycleHandlers.get(account.accountId)?.();
+      const offOpen = client.on("open", () => {
         ctx.log?.info?.(`[${CHANNEL_ID}] websocket opened account="${account.accountId}"`);
         ctx.setStatus({
           ...ctx.getStatus(),
@@ -264,10 +267,15 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
           lastConnectedAt: Date.now(),
         });
       });
-      client.on("close", (event) => {
+      const offClose = client.on("close", (event) => {
         ctx.log?.warn?.(
           `[${CHANNEL_ID}] websocket closed account="${account.accountId}" code=${event.code} reason="${event.reason}"`,
         );
+        if (event.code === 1005) {
+          ctx.log?.warn?.(
+            `[${CHANNEL_ID}] close code=1005 表示对端未发送 close frame，常见于 wsUrl 不匹配、鉴权失败或网关主动断开`,
+          );
+        }
         ctx.setStatus({
           ...ctx.getStatus(),
           connected: false,
@@ -278,7 +286,7 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
           },
         });
       });
-      client.on("error", (error) => {
+      const offError = client.on("error", (error) => {
         ctx.log?.error?.(
           `[${CHANNEL_ID}] websocket error account="${account.accountId}" message="${error.message}"`,
         );
@@ -288,17 +296,30 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
           connected: client?.getState() === "open",
         });
       });
-      client.on("message", () => {
+      const offReconnect = client.on("reconnecting", (event) => {
+        ctx.log?.warn?.(
+          `[${CHANNEL_ID}] reconnecting account="${account.accountId}" attempt=${event.attempt} delayMs=${event.delayMs} reason="${event.reason}"`,
+        );
+      });
+      const offMessage = client.on("message", () => {
         ctx.setStatus({
           ...ctx.getStatus(),
           lastInboundAt: Date.now(),
         });
       });
-      client.on("response", () => {
+      const offResponse = client.on("response", () => {
         ctx.setStatus({
           ...ctx.getStatus(),
           lastOutboundAt: Date.now(),
         });
+      });
+      detachLifecycleHandlers.set(account.accountId, () => {
+        offOpen();
+        offClose();
+        offError();
+        offReconnect();
+        offMessage();
+        offResponse();
       });
 
       ctx.log?.info?.(`[${CHANNEL_ID}] connecting websocket account="${account.accountId}"`);
@@ -339,6 +360,8 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
       const client = clients.get(account.accountId);
       detachInboundHandlers.get(account.accountId)?.();
       detachInboundHandlers.delete(account.accountId);
+      detachLifecycleHandlers.get(account.accountId)?.();
+      detachLifecycleHandlers.delete(account.accountId);
       if (client) {
         ctx.log?.info?.(
           `[${CHANNEL_ID}] disconnecting websocket account="${account.accountId}" state="${client.getState()}"`,
