@@ -24,7 +24,26 @@ import { dispatchQQMessage } from "./send";
 const clients = new Map<string, OneBotWsClient>();
 const detachInboundHandlers = new Map<string, () => void>();
 
+function logInfo(message: string, extra?: unknown): void {
+  if (extra === undefined) {
+    console.log(`[${CHANNEL_ID}] ${message}`);
+    return;
+  }
+  console.log(`[${CHANNEL_ID}] ${message}`, extra);
+}
+
+function logWarn(message: string, extra?: unknown): void {
+  if (extra === undefined) {
+    console.warn(`[${CHANNEL_ID}] ${message}`);
+    return;
+  }
+  console.warn(`[${CHANNEL_ID}] ${message}`, extra);
+}
+
 function createClient(account: ResolvedQQAccount): OneBotWsClient {
+  logInfo(`creating websocket client for account="${account.accountId}"`, {
+    wsUrl: account.config.wsUrl,
+  });
   return new OneBotWsClient({
     url: account.config.wsUrl,
     accessToken: account.config.accessToken || undefined,
@@ -41,17 +60,25 @@ async function ensureSendClient(cfg: OpenClawConfig, accountId?: string | null):
   temporary: boolean;
 }> {
   const resolved = resolveQQAccount({ cfg, accountId });
+  logInfo(`resolving send client for account="${resolved.accountId}"`);
   const existing = clients.get(resolved.accountId);
   if (existing && existing.getState() === "open") {
+    logInfo(`reusing opened client for account="${resolved.accountId}"`);
     return { client: existing, temporary: false };
   }
   const temporary = !existing;
   const client = existing ?? createClient(resolved);
   if (client.getState() !== "open") {
+    logInfo(`connecting send client for account="${resolved.accountId}"`, {
+      temporary,
+      state: client.getState(),
+    });
     await client.connect();
+    logInfo(`send client connected for account="${resolved.accountId}"`);
   }
   if (!existing) {
     clients.set(resolved.accountId, client);
+    logInfo(`send client cached for account="${resolved.accountId}"`);
   }
   return { client, temporary };
 }
@@ -196,7 +223,13 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
   gateway: {
     startAccount: async (ctx) => {
       const account = resolveQQAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
+      ctx.log?.info?.(
+        `[${CHANNEL_ID}] startAccount begin account="${account.accountId}" wsUrl="${account.config.wsUrl}"`,
+      );
       if (!account.configured) {
+        ctx.log?.warn?.(
+          `[${CHANNEL_ID}] startAccount blocked: account="${account.accountId}" not configured`,
+        );
         throw new Error(
           `PinguClaw QQ is not configured for account "${account.accountId}"`,
         );
@@ -206,6 +239,11 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
       if (!client) {
         client = createClient(account);
         clients.set(account.accountId, client);
+        ctx.log?.info?.(`[${CHANNEL_ID}] created runtime client account="${account.accountId}"`);
+      } else {
+        ctx.log?.info?.(
+          `[${CHANNEL_ID}] reuse runtime client account="${account.accountId}" state="${client.getState()}"`,
+        );
       }
 
       ctx.setStatus({
@@ -218,6 +256,7 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
       });
 
       client.on("open", () => {
+        ctx.log?.info?.(`[${CHANNEL_ID}] websocket opened account="${account.accountId}"`);
         ctx.setStatus({
           ...ctx.getStatus(),
           connected: true,
@@ -226,6 +265,9 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
         });
       });
       client.on("close", (event) => {
+        ctx.log?.warn?.(
+          `[${CHANNEL_ID}] websocket closed account="${account.accountId}" code=${event.code} reason="${event.reason}"`,
+        );
         ctx.setStatus({
           ...ctx.getStatus(),
           connected: false,
@@ -237,6 +279,9 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
         });
       });
       client.on("error", (error) => {
+        ctx.log?.error?.(
+          `[${CHANNEL_ID}] websocket error account="${account.accountId}" message="${error.message}"`,
+        );
         ctx.setStatus({
           ...ctx.getStatus(),
           lastError: error.message,
@@ -256,7 +301,9 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
         });
       });
 
+      ctx.log?.info?.(`[${CHANNEL_ID}] connecting websocket account="${account.accountId}"`);
       await client.connect();
+      ctx.log?.info?.(`[${CHANNEL_ID}] connect finished account="${account.accountId}"`);
       detachInboundHandlers.get(account.accountId)?.();
       detachInboundHandlers.set(
         account.accountId,
@@ -266,23 +313,41 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
           account,
         }),
       );
+      ctx.log?.info?.(`[${CHANNEL_ID}] inbound handler attached account="${account.accountId}"`);
 
       await new Promise<void>((resolve) => {
         if (ctx.abortSignal.aborted) {
+          ctx.log?.info?.(
+            `[${CHANNEL_ID}] startAccount aborted before wait account="${account.accountId}"`,
+          );
           resolve();
           return;
         }
-        ctx.abortSignal.addEventListener("abort", () => resolve(), { once: true });
+        ctx.abortSignal.addEventListener(
+          "abort",
+          () => {
+            ctx.log?.info?.(`[${CHANNEL_ID}] startAccount abort received account="${account.accountId}"`);
+            resolve();
+          },
+          { once: true },
+        );
       });
     },
     stopAccount: async (ctx) => {
       const account = resolveQQAccount({ cfg: ctx.cfg, accountId: ctx.accountId });
+      ctx.log?.info?.(`[${CHANNEL_ID}] stopAccount begin account="${account.accountId}"`);
       const client = clients.get(account.accountId);
       detachInboundHandlers.get(account.accountId)?.();
       detachInboundHandlers.delete(account.accountId);
       if (client) {
+        ctx.log?.info?.(
+          `[${CHANNEL_ID}] disconnecting websocket account="${account.accountId}" state="${client.getState()}"`,
+        );
         await client.disconnect();
         clients.delete(account.accountId);
+        ctx.log?.info?.(`[${CHANNEL_ID}] websocket disconnected account="${account.accountId}"`);
+      } else {
+        ctx.log?.warn?.(`[${CHANNEL_ID}] stopAccount no client found account="${account.accountId}"`);
       }
       ctx.setStatus({
         ...ctx.getStatus(),
@@ -297,6 +362,7 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
     sendText: async ({ cfg, to, text, accountId, replyToId }) => {
       const { client, temporary } = await ensureSendClient(cfg, accountId);
       try {
+        logInfo(`dispatch outbound message account="${resolveQQAccount({ cfg, accountId }).accountId}"`);
         const result = await dispatchQQMessage({
           client,
           to,
@@ -310,11 +376,13 @@ export const QQChannel: ChannelPlugin<ResolvedQQAccount> = {
         };
       } finally {
         if (temporary) {
+          logInfo("closing temporary send client");
           await client.disconnect();
-          clients.delete(resolveQQAccount({ cfg, accountId }).accountId);
+          const resolved = resolveQQAccount({ cfg, accountId });
+          clients.delete(resolved.accountId);
+          logInfo(`temporary send client closed account="${resolved.accountId}"`);
         }
       }
     },
   },
 };
-
