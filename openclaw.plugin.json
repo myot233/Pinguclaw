@@ -1,0 +1,8 @@
+{
+  "id": "pinguclaw",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@openclaw/pinguclaw",
+  "version": "2026.2.23",
+  "private": true,
+  "description": "OpenClaw PinguClaw channel plugin via OneBot v11",
+  "type": "module",
+  "packageManager": "pnpm@10.20.0",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "ws": "^8.18.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "openclaw": "2026.2.21-2",
+    "typescript": "^5.9.3"
+  }
+}
